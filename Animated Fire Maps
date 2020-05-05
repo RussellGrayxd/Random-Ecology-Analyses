@@ -1,0 +1,142 @@
+library(gganimate)
+library(ggplot2)
+library(rgdal)
+library(sp)
+library(raster)
+library(rgeos)
+library(sf)
+library(lubridate)
+library(rmapshaper)
+library(ggmap)
+library(hddtools)
+library(ggspatial)
+library(magick)
+library(mapview)
+
+# add your google API key here
+register_google(key = "")
+
+
+
+# set your working directory to the folder with your fire data
+setwd("")
+list.files()
+
+# read in shapefile
+fire <- read.csv("fire_archive_M6_121929.csv")
+
+# get Belize map shapefile
+Belize <- getData("GADM", country = "BLZ", level=0)
+
+# standardize date column and put it into format
+# that R can read without issue
+fire$acq_date <- as.POSIXct(fire$acq_date, format = "%Y-%m-%d")
+
+
+# get zoomed out map
+map.zoom <- get_map(location = c(-86, 12), maptype = "satellite", zoom = 6)
+
+# get Belize in Focus
+map.bz <- get_map(location = c(-88.8, 17.3), maptype = "satellite", zoom = 8)
+
+
+# convert coords to a spatial points object with data included and projection 
+# as latlong 4326 epsg
+sp <- SpatialPoints(cbind(fire$longitude, fire$latitude),
+                    proj4string = CRS("+init=epsg:4326"))
+
+# add data
+sp$date <- fire$acq_date
+sp$brightness <- fire$brightness
+sp$frp <- fire$frp
+
+# make a bounding box polygon for Belize
+boundingbox <- raster::extent(-89.22417, -87.48597, 15.89266, 18.49729)
+bbox.bz <- bboxSpatialPolygon(boundingbox = boundingbox)
+
+# check the bbox
+mapview(bbox.bz)
+
+
+#animated models!
+
+
+fire_map <- ggmap(map.bz) +
+  geom_polygon(data = Belize, aes(x = long, y = lat, group = group), size = 0.5,
+                       alpha = 1, linetype = 1, color = "white", fill = NA) +
+  geom_point(data = as.data.frame(sp),
+             aes(x = coords.x1, y = coords.x2, color = as.integer(brightness), size = frp),
+              pch = 16, alpha=0.5) + 
+  scale_color_gradient(low="yellow", high = "red")+
+  labs(x = "Longitude", y = "Latitude", color = "Fire Brightness", 
+       size = "Fire Radiative Power",
+       title = "Fire occurences 2015-2020",
+       subtitle = "Data source: NASA FIRMS MODIS-6 https://firms.modaps.eosdis.nasa.gov")+
+  theme(legend.background = element_blank(),
+        legend.key = element_blank(),
+        legend.position = "bottom",
+        legend.box = "vertical",
+        legend.margin=margin(t=, r=0, b=-0.1, l=0, unit="cm"))+
+  guides(colour = guide_colourbar(title.position="top", title.hjust = 0.5,
+                                 barwidth = 20, barheight = 0.8, order = 1),
+         size = guide_legend(title.position="top", title.hjust = 0.5, byrow = 2, order = 2))+
+  coord_cartesian(xlim=c(-89.22417, -87.48597), ylim = c(15.89266,  18.49729)) 
+
+fire_map
+
+#--------------------------------------------------------------------------------------
+
+fire_map2 <- ggmap(map.zoom) +
+  geom_polygon(data = Belize, aes(x = long, y = lat, group = group), size = 1,
+               alpha = 1, linetype = 1, color = "white", fill = NA) +
+  geom_point(data = as.data.frame(sp),
+             aes(x = coords.x1, y = coords.x2, color = as.integer(brightness), size = frp),
+             pch = 16, alpha=0.5) + 
+  geom_polygon(data = bbox.bz, aes(x = long, y = lat, group = group), size = 1,
+               alpha = 1, linetype = 1, color = "red", fill = NA) +
+  scale_color_gradient(low="yellow", high = "red")+
+  labs(x = "Longitude", y = "Latitude", color = "Fire Brightness", 
+       size = "Fire Radiative Power",
+       title = "Fire occurences 2015-2020",
+       subtitle = "Data source: NASA FIRMS MODIS-6 https://firms.modaps.eosdis.nasa.gov")+
+  theme(legend.background = element_blank(),
+        legend.key = element_blank(),
+        legend.position = "bottom",
+        legend.box = "vertical",
+        legend.margin=margin(t=, r=0, b=-0.1, l=0, unit="cm"))+
+  guides(colour = guide_colourbar(title.position="top", title.hjust = 0.5,
+                                  barwidth = 20, barheight = 0.8, order = 1),
+         size = guide_legend(title.position="top", title.hjust = 0.5, byrow = 2, order = 2))
+
+
+fire_map2
+
+
+#--------------------------------------------------
+
+#store the gganimate objects into a name
+mov1<-fire_map2 +
+  labs(title = 'Date: {frame_time}', x = 'Longitude', y = 'Latitude') +
+  transition_time(date)
+
+
+mov2<-fire_map +
+  labs(title = 'Date: {frame_time}', x = 'Longitude', y = 'Latitude') +
+  transition_time(date)
+
+#turn them into .gif files
+a_mgif <- animate(mov1, width = 500, height = 700, fps = 7)
+b_mgif <- animate(mov2, width = 400, height = 700, fps = 7)
+a_gif <- image_read(a_mgif)
+b_gif <- image_read(b_mgif)
+#########################
+new_gif <- image_append(c(a_gif[1], b_gif[1]))
+for(i in 2:100){
+  combined <- image_append(c(a_gif[i], b_gif[i]))
+  new_gif <- c(new_gif, combined)
+}
+new_gif
+
+
+anim_save("firemaps.gif", new_gif)
+
